@@ -52,3 +52,9 @@ test('sanitizeRequest limita el largo de los mensajes', () => {
   const r = sanitizeRequest({ messages: [{ sender: 'user', text: 'a'.repeat(9000) }] })
   assert.strictEqual(r.value.messages[0].content.length, 4000)
 })
+
+test('el prompt usa "el NSR-10" y nunca "la NSR-10"', () => {
+  const p = buildSystemPrompt('initial')
+  assert.match(p, /el NSR-10/)
+  assert.doesNotMatch(p.replace(/nunca "la NSR-10"/, ''), /la NSR-10/)
+})
