@@ -1,5 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, BookOpen, Award, Target } from 'lucide-react';
+import MessageText from '../components/MessageText';
+import { TOPICS } from '../lib/tutor';
+
+const FALLBACK_MESSAGE = "Lo siento, he tenido un problema técnico. ¿Podrías intentar de nuevo? Estoy aquí para ayudarte con estructuras de acero. 😊";
 
 export default function SteelStructuresTutor() {
   const [messages, setMessages] = useState([]);
@@ -31,79 +35,48 @@ export default function SteelStructuresTutor() {
     setMessages([initialMessage]);
   }, []);
 
-  const generateBotResponse = async (userMessage) => {
+  const nextId = useRef(2);
+
+  const now = () => new Date().toLocaleTimeString();
+
+  const requestBotResponse = async (history) => {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history, conversationState, studentData })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.response || `Request failed: ${response.status}`);
+    return data;
+  };
+
+  const sendText = async (text) => {
+    const trimmed = text.trim();
+    if (!trimmed || isLoading) return;
+
+    const userMessage = { id: nextId.current++, text: trimmed, sender: 'user', timestamp: now() };
+    const history = [...messages, userMessage];
+    setMessages(history);
+    setInputMessage('');
     setIsLoading(true);
-    
+
+    let botText = FALLBACK_MESSAGE;
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          userMessage,
-          messages,
-          conversationState,
-          studentData
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`Request failed: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      // Actualizar estado de conversación basado en la respuesta
-      updateConversationState(userMessage, data.response);
-
-      return data.response;
-
+      const data = await requestBotResponse(history);
+      botText = data.response;
+      // El servidor devuelve el estado y los datos del estudiante que dedujo el tutor.
+      if (data.conversationState) setConversationState(data.conversationState);
+      if (data.studentData) setStudentData(data.studentData);
     } catch (error) {
       console.error('Error generating response:', error);
-      return "Lo siento, he tenido un problema técnico. ¿Podrías intentar de nuevo? Estoy aquí para ayudarte con estructuras de acero. 😊";
     } finally {
       setIsLoading(false);
     }
+
+    setMessages(prev => [...prev, { id: nextId.current++, text: botText, sender: 'bot', timestamp: now() }]);
   };
 
-  const updateConversationState = (userMessage, botResponse) => {
-    if (conversationState === 'initial' && userMessage.trim()) {
-      setConversationState('topic_selected');
-      setStudentData(prev => ({ ...prev, topic: userMessage }));
-    } else if (conversationState === 'topic_selected' && userMessage.includes('grado')) {
-      setConversationState('level_identified');
-      setStudentData(prev => ({ ...prev, level: userMessage }));
-    } else if (conversationState === 'level_identified') {
-      setConversationState('teaching');
-      setStudentData(prev => ({ ...prev, priorKnowledge: userMessage }));
-    }
-  };
-
-  const handleSendMessage = async () => {
-    if (inputMessage.trim() === '') return;
-
-    const userMessage = {
-      id: messages.length + 1,
-      text: inputMessage,
-      sender: 'user',
-      timestamp: new Date().toLocaleTimeString()
-    };
-
-    setMessages(prev => [...prev, userMessage]);
-    setInputMessage('');
-
-    const botResponse = await generateBotResponse(inputMessage);
-    
-    const botMessage = {
-      id: messages.length + 2,
-      text: botResponse,
-      sender: 'bot',
-      timestamp: new Date().toLocaleTimeString()
-    };
-
-    setMessages(prev => [...prev, botMessage]);
-  };
+  const handleSendMessage = () => sendText(inputMessage);
 
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -179,7 +152,9 @@ export default function SteelStructuresTutor() {
                   ? 'bg-green-500 text-white' 
                   : 'bg-white text-gray-800 border-l-4 border-yellow-400'
               }`}>
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.text}</p>
+                {message.sender === 'bot'
+                  ? <MessageText text={message.text} />
+                  : <p className="text-sm whitespace-pre-wrap leading-relaxed">{message.text}</p>}
                 <p className={`text-xs mt-2 ${message.sender === 'user' ? 'text-green-100' : 'text-gray-500'}`}>
                   {message.timestamp}
                 </p>
@@ -215,7 +190,7 @@ export default function SteelStructuresTutor() {
             <textarea
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
+              onKeyDown={handleKeyPress}
               placeholder="Escribe tu respuesta aquí... (Presiona Enter para enviar)"
               className="w-full p-3 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               rows="2"
@@ -233,14 +208,21 @@ export default function SteelStructuresTutor() {
         
         {/* Quick Tips */}
         <div className="mt-3 flex flex-wrap gap-2">
-          {conversationState === 'initial' && (
-            <>
-              <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs">💡 Ejemplo: "Pandeo de columnas"</span>
-              <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-xs">💡 Ejemplo: "Conexiones soldadas"</span>
-            </>
-          )}
+          {conversationState === 'initial' && TOPICS.slice(0, 8).map(topic => (
+            <button
+              key={topic}
+              onClick={() => sendText(topic)}
+              disabled={isLoading}
+              className="bg-blue-100 hover:bg-blue-200 text-blue-800 px-3 py-1 rounded-full text-xs disabled:opacity-50"
+            >
+              💡 {topic}
+            </button>
+          ))}
           {conversationState === 'topic_selected' && (
             <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-xs">📚 Indica tu nivel: pregrado/postgrado y semestre</span>
+          )}
+          {conversationState === 'verification' && (
+            <span className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-xs">✅ Explica con tus palabras lo que aprendiste</span>
           )}
         </div>
       </div>
@@ -257,7 +239,7 @@ export default function SteelStructuresTutor() {
               {studentData.level && (
                 <span className="flex items-center space-x-1">
                   <Award className="w-4 h-4 text-green-600" />
-                  <strong>Nivel:</strong> <span className="text-green-600">{studentData.level}</span>
+                  <strong>Nivel:</strong> <span className="text-green-600">{studentData.level}{studentData.semester ? ` · ${studentData.semester}` : ''}</span>
                 </span>
               )}
             </div>
